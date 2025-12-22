@@ -8,9 +8,6 @@ OUT_DIR = "../data_yolo"
 # Classes to keep and their new IDs
 KEEP_CLASSES = ["person", "head", "helmet"]
 
-"""The ‘Workers’ class was removed due to semantic overlap with ‘person’, 
-which can introduce label ambiguity and degrade detector convergence."""
-
 
 def convert_split(split):
     img_dir = Path(COCO_DIR) / split
