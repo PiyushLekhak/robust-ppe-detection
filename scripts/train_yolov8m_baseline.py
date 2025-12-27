@@ -10,7 +10,7 @@ model.train(
     device=0,
     amp=True,
     workers=4,
-    project="runs/baseline",
+    project="../runs/baseline",
     name="yolov8m_baseline",
     seed=42,
     verbose=True,
