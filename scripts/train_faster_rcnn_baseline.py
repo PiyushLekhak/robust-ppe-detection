@@ -34,7 +34,8 @@ def seed_everything(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 # ---------------- TRANSFORMS ----------------
@@ -95,7 +96,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, scaler):
 # ---------------- MAIN ----------------
 def main():
     seed_everything(SEED)
-    print(f"Training Faster R-CNN (Frozen Backbone) on {DEVICE}")
+    print(f"Training Faster R-CNN on {DEVICE}")
     os.makedirs(RUN_DIR, exist_ok=True)
 
     train_dataset = PPEDataset(TRAIN_IMG_DIR, TRAIN_JSON, transforms=transform)
