@@ -1,8 +1,18 @@
+# Python & environment
 .venv/
-data/
-__pycache__/
 .env/
+
+# Data & caches
+data/
+data_yolo/
+
+# Python cache
+__pycache__/
+
+# Logs
+*.log
+
+# Models
 models/
 *.pt
-data_yolo/ 
-*.log
+*.pth
