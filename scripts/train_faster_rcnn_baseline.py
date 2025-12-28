@@ -27,7 +27,7 @@ RUN_DIR = "runs/baseline/faster_rcnn_baseline"
 
 USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if USE_CUDA else "cpu")
-NUM_WORKERS = 2
+NUM_WORKERS = 4
 PIN_MEMORY = True
 
 
@@ -69,6 +69,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, scaler):
     total_loss = 0.0
 
     for i, (images, targets) in enumerate(data_loader):
+        print(f"Training batch {i+1}/{len(data_loader)}")
         images = [img.to(device) for img in images]
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
