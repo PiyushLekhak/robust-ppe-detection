@@ -4,6 +4,7 @@ import torch
 import random
 import numpy as np
 import torchvision
+import csv
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.transforms import functional as F
 from torch import amp
@@ -31,50 +32,41 @@ NUM_WORKERS = 4
 PIN_MEMORY = True
 
 
-# ---------------- SEEDING ----------------
 def seed_everything(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False  # For speed
-    torch.backends.cudnn.benchmark = True  # For speed
+        torch.backends.cudnn.deterministic = False  # For speed
+        torch.backends.cudnn.benchmark = True
 
 
-# ---------------- TRANSFORMS ----------------
 def transform(img):
     return F.to_tensor(img)
 
 
-# ---------------- MODEL ----------------
 def get_model(num_classes):
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         weights="DEFAULT", min_size=640, max_size=640
     )
-
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
     # Freeze backbone only (matches YOLO freeze=10 philosophy)
     for param in model.backbone.body.parameters():
         param.requires_grad = False
-
     return model
 
 
-# ---------------- TRAINING ----------------
-def train_one_epoch(model, optimizer, data_loader, device, epoch, scaler):
+def train_one_epoch(model, optimizer, data_loader, device, scaler):
     model.train()
     total_loss = 0.0
-
-    for i, (images, targets) in enumerate(data_loader):
-        print(f"Training batch {i+1}/{len(data_loader)}")
+    for images, targets in data_loader:
         images = [img.to(device) for img in images]
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         optimizer.zero_grad()
-
         with amp.autocast(device_type=device.type, enabled=USE_CUDA):
             loss_dict = model(images, targets)
             losses = sum(loss for loss in loss_dict.values())
@@ -82,47 +74,43 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, scaler):
         scaler.scale(losses).backward()
         scaler.step(optimizer)
         scaler.update()
-
         total_loss += losses.item()
-
     return total_loss / len(data_loader)
 
 
-# ---------------- VALIDATION ----------------
 @torch.no_grad()
 def validate(model, data_loader, device):
     model.eval()
-    metric = MeanAveragePrecision(
-        iou_type="bbox", class_metrics=True  # Enable per-class metrics
-    )
+    metric = MeanAveragePrecision(iou_type="bbox", class_metrics=True)
 
     for images, targets in data_loader:
         images = [img.to(device) for img in images]
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-
         outputs = model(images)
+        metric.update(
+            [{k: v.cpu() for k, v in t.items()} for t in outputs],
+            [{k: v.cpu() for k, v in t.items()} for t in targets],
+        )
 
-        outputs_cpu = [{k: v.cpu() for k, v in t.items()} for t in outputs]
-        targets_cpu = [{k: v.cpu() for k, v in t.items()} for t in targets]
+    res = metric.compute()
 
-        metric.update(outputs_cpu, targets_cpu)
+    map_50 = res["map_50"].item()
+    map_50_95 = res["map"].item()
 
-    result = metric.compute()
-    map_50 = result["map_50"].item()
-    map_50_95 = result["map"].item()
-    map_per_class = result.get("map_per_class", None)
+    map_per_class = res.get("map_per_class", torch.tensor([]))
+    class_aps = [x.item() for x in map_per_class]
+    while len(class_aps) < 3:
+        class_aps.append(0.0)
 
-    return map_50, map_50_95, map_per_class
+    return map_50, map_50_95, class_aps[0], class_aps[1], class_aps[2]
 
 
-# ---------------- MAIN ----------------
 def main():
     seed_everything(SEED)
-    os.makedirs(RUN_DIR, exist_ok=True)
+    start_time = time.time()
     print(f"Training Faster R-CNN on {DEVICE} for {EPOCHS} epochs")
-    print(f"Using 2x schedule (24 epochs) - standard for ResNet-50 backbone")
+    os.makedirs(RUN_DIR, exist_ok=True)
 
-    # Datasets
     train_dataset = PPEDataset(TRAIN_IMG_DIR, TRAIN_JSON, transforms=transform)
     val_dataset = PPEDataset(VAL_IMG_DIR, VAL_JSON, transforms=transform)
 
@@ -143,67 +131,71 @@ def main():
         pin_memory=PIN_MEMORY,
     )
 
-    # Model
-    model = get_model(NUM_CLASSES)
-    model.to(DEVICE)
-
+    model = get_model(NUM_CLASSES).to(DEVICE)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=LR, momentum=0.9, weight_decay=0.0005)
-
-    # Multi-step scheduler: drop LR at epoch 16 (standard for 2x schedule)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones=[16], gamma=0.1
     )
-
     scaler = amp.GradScaler(enabled=USE_CUDA)
 
     best_map = 0.0
-    start_time = time.time()
+    csv_file = os.path.join(RUN_DIR, "results.csv")
 
-    for epoch in range(EPOCHS):
-        # Train
-        train_loss = train_one_epoch(
-            model, optimizer, train_loader, DEVICE, epoch, scaler
+    # Initialize CSV
+    with open(csv_file, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "epoch",
+                "train_loss",
+                "map_50",
+                "map_50_95",
+                "person_ap",
+                "head_ap",
+                "helmet_ap",
+                "lr",
+            ]
         )
 
-        # Validate
-        map_50, map_50_95, map_per_class = validate(model, val_loader, DEVICE)
+    print(f"Starting training for {EPOCHS} epochs...")
 
-        # Update LR
+    for epoch in range(EPOCHS):
+        train_loss = train_one_epoch(model, optimizer, train_loader, DEVICE, scaler)
+        map_50, map_50_95, p_ap, h_ap, hel_ap = validate(model, val_loader, DEVICE)
         lr_scheduler.step()
 
         print(
             f"Epoch [{epoch+1}/{EPOCHS}] | "
             f"Loss: {train_loss:.4f} | "
             f"mAP@50: {map_50:.4f} | "
-            f"mAP@50-95: {map_50_95:.4f}"
+            f"LR: {optimizer.param_groups[0]['lr']:.5f}"
         )
 
-        # Per-class AP
-        if map_per_class is not None:
-            class_names = ["person", "head", "helmet"]
-            for i, ap in enumerate(map_per_class.tolist()):
-                if i < len(class_names):
-                    print(f"  {class_names[i]} AP: {ap:.4f}")
+        # Log to CSV
+        with open(csv_file, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    epoch + 1,
+                    train_loss,
+                    map_50,
+                    map_50_95,
+                    p_ap,
+                    h_ap,
+                    hel_ap,
+                    optimizer.param_groups[0]["lr"],
+                ]
+            )
 
-        # Save best model
         if map_50 > best_map:
             best_map = map_50
-            best_path = os.path.join(RUN_DIR, "best.pth")
-            torch.save(model.state_dict(), best_path)
-            print(f"  >>> Best model saved (mAP@50: {best_map:.4f})")
+            torch.save(model.state_dict(), os.path.join(RUN_DIR, "best.pth"))
+            print(f"  >>> New best model (mAP@50={map_50:.4f}) saved")
 
-    # Save last model
-    last_path = os.path.join(RUN_DIR, "last.pth")
-    torch.save(model.state_dict(), last_path)
-
+    torch.save(model.state_dict(), os.path.join(RUN_DIR, "last.pth"))
     total_time = time.time() - start_time
-    print(f"\n{'='*60}")
-    print(f"Training Complete!")
-    print(f"Total time: {total_time/3600:.2f} hours")
-    print(f"Best mAP@50: {best_map:.4f}")
-    print(f"Models saved in: {RUN_DIR}")
-    print(f"{'='*60}")
+    print(f"Done. Total training time: {total_time/3600:.2f} hours")
 
 
 if __name__ == "__main__":
