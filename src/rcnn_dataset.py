@@ -12,23 +12,44 @@ class PPEDataset(Dataset):
         self.transforms = transforms
 
         # -------------------------------------------------
-        # KEEP ONLY THESE CLASSES
+        # STABLE CLASS MAPPING (UPDATED)
         # -------------------------------------------------
-        self.allowed_classes = ["person", "head", "helmet"]
+        # canonical order used everywhere (semantic names)
+        # NOTE: keep these lowercase to match COCO category names in annotation file
+        CANONICAL_CLASS_NAMES = ["person", "head", "helmet"]
+        self.allowed_classes = CANONICAL_CLASS_NAMES.copy()
 
-        # Load COCO categories
+        # Load COCO categories and build name -> coco_category_id map
         cats = self.coco.loadCats(self.coco.getCatIds())
 
-        # name -> coco_category_id (only allowed classes)
+        # Only keep categories that exist in the COCO file and are in our canonical list
         self.cat_name_to_id = {
             c["name"]: c["id"] for c in cats if c["name"] in self.allowed_classes
         }
 
-        # coco_category_id -> contiguous label (1..N)
-        # background = 0 (implicit)
-        self.cat_id_to_label = {
-            cat_id: idx + 1 for idx, cat_id in enumerate(self.cat_name_to_id.values())
-        }
+        # Build coco_category_id -> contiguous label using canonical order.
+        # We assign labels 1..N (0 reserved for background) and ensure the order matches CANONICAL_CLASS_NAMES.
+        self.cat_id_to_label = {}
+        self.label_to_cat_id = {}
+        self.class_names = []
+        for idx, name in enumerate(CANONICAL_CLASS_NAMES):
+            cid = self.cat_name_to_id.get(name)
+            if cid is not None:
+                label = idx + 1  # contiguous label: 1 -> person, 2 -> head, 3 -> helmet
+                self.cat_id_to_label[cid] = label
+                self.label_to_cat_id[label] = cid
+                self.class_names.append(name)
+
+        # Print mapping for reproducibility in logs
+        print(f"[PPEDataset] Canonical class order: {CANONICAL_CLASS_NAMES}")
+        print("[PPEDataset] name -> coco_id mapping:")
+        for n in CANONICAL_CLASS_NAMES:
+            cid = self.cat_name_to_id.get(n)
+            if cid is not None:
+                print(f"  {n} -> coco_id {cid} -> label {self.cat_id_to_label[cid]}")
+            else:
+                print(f"  {n} -> NOT FOUND in annotations")
+        # -------------------------------------------------
 
         # -------------------------------------------------
         # FILTER IMAGES WITH AT LEAST ONE VALID ANNOTATION

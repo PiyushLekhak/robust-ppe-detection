@@ -1,13 +1,11 @@
-# check_label_mapping_yolo.py
-import os, sys, csv
 from pathlib import Path
 import numpy as np
 import torch
 from ultralytics import YOLO
 from torchvision.ops import box_iou
-from collections import Counter, defaultdict
+from collections import Counter
 
-# CONFIG — adjust paths as needed
+# CONFIG
 DATA_YAML = "data_yolo/data.yaml"
 TEST_IMG_DIR = "data_yolo/test/images"
 TEST_LABEL_DIR = "data_yolo/test/labels"  # match your test labels

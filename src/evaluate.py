@@ -26,8 +26,20 @@ NUM_CLASSES = 4  # Background + 3 classes
 CLASS_NAMES = ["Person", "Head", "Helmet"]  # Order must match dataset IDs 1,2,3
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# ================= CANONICAL NAMES =================
+# canonical names (lowercase keys used in dicts)
+CANONICAL_CLASS_NAMES = ["person", "head", "helmet"]
+PRINT_CLASS_NAMES = ["Person", "Head", "Helmet"]
 
 # ================= UTILS =================
+
+
+def make_named_ap(per_class_ap_list):
+    named = {}
+    for i, name in enumerate(CANONICAL_CLASS_NAMES):
+        val = per_class_ap_list[i] if i < len(per_class_ap_list) else 0.0
+        named[name] = float(val)
+    return named
 
 
 def set_seed(seed=42):
@@ -35,8 +47,8 @@ def set_seed(seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False  # For speed
+    torch.backends.cudnn.benchmark = True
 
 
 def setup_logging():
@@ -55,6 +67,7 @@ def setup_logging():
                     "Person_AP",
                     "Head_AP",
                     "Helmet_AP",
+                    "Macro_AP",
                 ]
             )
 
@@ -67,6 +80,10 @@ def log_to_csv(model_name, map50, map5095, per_class_ap):
     while len(safe_ap) < 3:
         safe_ap.append(0.0)
 
+    # Use canonical mapping function regardless of source; both helpers are equivalent for lists.
+    named_ap = make_named_ap(safe_ap)
+    macro_ap = sum(named_ap.values()) / len(named_ap)
+
     with open(OUTPUT_CSV, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(
@@ -76,9 +93,10 @@ def log_to_csv(model_name, map50, map5095, per_class_ap):
                 "TEST",
                 f"{map50:.4f}",
                 f"{map5095:.4f}",
-                f"{safe_ap[0]:.4f}",
-                f"{safe_ap[1]:.4f}",
-                f"{safe_ap[2]:.4f}",
+                f"{named_ap['person']:.4f}",
+                f"{named_ap['head']:.4f}",
+                f"{named_ap['helmet']:.4f}",
+                f"{macro_ap:.4f}",
             ]
         )
     print(f"   [Log] Saved metrics for {model_name} to {OUTPUT_CSV}")
@@ -94,7 +112,6 @@ def evaluate_yolo():
         model = YOLO(YOLO_WEIGHTS)
 
         # Run Validation on Test Split
-        # plots=False speeds it up, save_json=False prevents extra file clutter
         results = model.val(
             data="data_yolo/data.yaml",
             split="test",
@@ -109,13 +126,19 @@ def evaluate_yolo():
         map5095 = results.box.map
 
         # results.box.maps contains the AP@50-95 for each class
-        # We assume the order in data.yaml matches [Person, Head, Helmet]
-        # This is standard if your dataset generation was consistent.
         per_class_ap = results.box.maps.tolist()
 
         # Print for Console
+        named_ap = make_named_ap(per_class_ap)
+        macro_ap = sum(named_ap.values()) / len(named_ap)
+
         print(f"   mAP@50:    {map50:.4f}")
         print(f"   mAP@50-95: {map5095:.4f}")
+        print("   Per-class AP:")
+        for printable in PRINT_CLASS_NAMES:
+            key = printable.lower()
+            print(f"     {printable:7s}: {named_ap[key]:.4f}")
+        print(f"   Macro-AP (mean per-class AP): {macro_ap:.4f}")
 
         return {
             "name": "YOLOv8",
@@ -135,14 +158,12 @@ def evaluate_rcnn():
     print(">>> 2. Evaluating Faster R-CNN Baseline")
     print("=" * 60)
 
-    # 1. Load Architecture (Exact same logic as training)
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         weights=None, min_size=640, max_size=640
     )
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, NUM_CLASSES)
 
-    # 2. Load Weights
     if not os.path.exists(RCNN_WEIGHTS):
         print(f"   [ERROR] Weights not found at {RCNN_WEIGHTS}")
         return None
@@ -151,8 +172,6 @@ def evaluate_rcnn():
     model.to(DEVICE)
     model.eval()
 
-    # 3. Prepare Data
-    # Note: No fancy transforms, just ToTensor for valid/test
     test_dataset = PPEDataset(
         TEST_IMG_DIR, TEST_JSON, transforms=lambda x: F.to_tensor(x)
     )
@@ -160,10 +179,8 @@ def evaluate_rcnn():
         test_dataset, batch_size=6, shuffle=False, num_workers=4, collate_fn=collate_fn
     )
 
-    # 4. Metric Setup
     metric = MeanAveragePrecision(iou_type="bbox", class_metrics=True)
 
-    # 5. Inference Loop
     print("   Running Inference...")
     with torch.no_grad():
         for i, (images, targets) in enumerate(test_loader):
@@ -172,29 +189,32 @@ def evaluate_rcnn():
 
             outputs = model(images)
 
-            # Move to CPU for metric calculation to save GPU memory
             metric.update(
                 [{k: v.cpu() for k, v in t.items()} for t in outputs],
                 [{k: v.cpu() for k, v in t.items()} for t in targets],
             )
 
-    # 6. Compute
     res = metric.compute()
 
-    # Extract Metrics
     map50 = res["map_50"].item()
     map5095 = res["map"].item()
 
-    # Extract Per-Class (Handle potential missing classes gracefully)
     map_per_class = res.get("map_per_class", torch.tensor([]))
     per_class_ap = [x.item() for x in map_per_class]
 
-    # Pad if model missed a class entirely (unlikely but safe)
     while len(per_class_ap) < 3:
         per_class_ap.append(0.0)
 
+    named_ap = make_named_ap(per_class_ap)
+    macro_ap = sum(named_ap.values()) / len(named_ap)
+
     print(f"   mAP@50:    {map50:.4f}")
     print(f"   mAP@50-95: {map5095:.4f}")
+    print("   Per-class AP:")
+    for printable in PRINT_CLASS_NAMES:
+        key = printable.lower()
+        print(f"     {printable:7s}: {named_ap[key]:.4f}")
+    print(f"   Macro-AP (mean per-class AP): {macro_ap:.4f}")
 
     return {
         "name": "Faster R-CNN",
@@ -236,24 +256,37 @@ def main():
 
     # Header
     print(
-        f"{'Model':<15} | {'mAP@50':<10} | {'mAP@50-95':<10} | {'Person AP':<10} | {'Head AP':<10} | {'Helmet AP':<10}"
+        f"{'Model':<15} | {'mAP@50':<10} | {'mAP@50-95':<10} | {'Person AP':<10} | {'Head AP':<10} | {'Helmet AP':<10} | {'Macro-AP':<10}"
     )
     print("-" * 80)
 
     # Rows
     for res in [yolo_res, rcnn_res]:
         if res:
-            ap = res["per_class_ap"]
+            # convert list -> named map for robust printing
+            ap_list = res["per_class_ap"]
+            named = make_named_ap(
+                ap_list
+            )  # this mapping is canonical and works for both models
+            macro = sum(named.values()) / len(named) if len(named) > 0 else 0.0
             print(
-                f"{res['name']:<15} | {res['map50']:<10.4f} | {res['map5095']:<10.4f} | {ap[0]:<10.4f} | {ap[1]:<10.4f} | {ap[2]:<10.4f}"
+                f"{res['name']:<15} | {res['map50']:<10.4f} | {res['map5095']:<10.4f} | "
+                f"{named['person']:<10.4f} | {named['head']:<10.4f} | {named['helmet']:<10.4f} | {macro:<10.4f}"
             )
-
     print("=" * 80)
 
     # Automated Insight Generation
     if yolo_res and rcnn_res:
-        y_helmet = yolo_res["per_class_ap"][2]
-        r_helmet = rcnn_res["per_class_ap"][2]
+        y_helmet = (
+            yolo_res["per_class_ap"][2]
+            if yolo_res and len(yolo_res["per_class_ap"]) > 2
+            else 0.0
+        )
+        r_helmet = (
+            rcnn_res["per_class_ap"][2]
+            if rcnn_res and len(rcnn_res["per_class_ap"]) > 2
+            else 0.0
+        )
 
         print("\n>>> AUTOMATED INSIGHTS:")
         if r_helmet < 0.1 and y_helmet > 0.3:
