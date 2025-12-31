@@ -22,7 +22,6 @@ VAL_JSON = "data/valid/_annotations.coco.json"
 
 BATCH_SIZE = 6
 EPOCHS = 24  # Standard "2x schedule" for Faster R-CNN with ResNet-50
-FREEZE_EPOCHS = 10  # Freeze backbone for the first 10 epochs (match YOLO freeze=10)
 LR = 0.005
 NUM_CLASSES = 4  # background + 3 PPE classes
 RUN_DIR = "runs/baseline/faster_rcnn_baseline"
@@ -47,30 +46,17 @@ def transform(img):
     return F.to_tensor(img)
 
 
-def get_model(num_classes, freeze_backbone_initial=True):
-    """
-    Build Faster R-CNN and optionally freeze backbone initially.
-    num_classes should equal (1 + number_of_classes) i.e. background + 3 classes -> 4
-    CHANGE: we only set initial requires_grad here; we do NOT permanently freeze.
-    Unfreezing is handled by set_backbone_trainable() in the training loop.
-    """
+def get_model(num_classes):
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         weights="DEFAULT", min_size=640, max_size=640
     )
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
-    # Optionally set initial backbone freeze (only backbone.body)
-    if freeze_backbone_initial:
-        for param in model.backbone.body.parameters():
-            param.requires_grad = False
-    return model
-
-
-def set_backbone_trainable(model, trainable: bool):
-    """Toggle backbone.body parameters' requires_grad flag."""
+    # Freeze backbone only (matches YOLO freeze=10 philosophy)
     for param in model.backbone.body.parameters():
-        param.requires_grad = trainable
+        param.requires_grad = False
+    return model
 
 
 def train_one_epoch(model, optimizer, data_loader, device, scaler):
@@ -185,25 +171,6 @@ def main():
             f"mAP@50: {map_50:.4f} | "
             f"LR: {optimizer.param_groups[0]['lr']:.5f}"
         )
-
-        # --- Unfreeze schedule: when epoch == FREEZE_EPOCHS unfreeze backbone and recreate optimizer ---
-        if FREEZE_EPOCHS is not None and epoch == FREEZE_EPOCHS:
-            print(
-                f"[INFO] Unfreezing backbone at epoch {epoch} (FREEZE_EPOCHS={FREEZE_EPOCHS})"
-            )
-            set_backbone_trainable(model, True)
-            # IMPORTANT: recreate optimizer so newly-unfrozen params are included
-            params = [p for p in model.parameters() if p.requires_grad]
-            optimizer = torch.optim.SGD(
-                params, lr=LR, momentum=0.9, weight_decay=0.0005
-            )
-            try:
-                lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-                    optimizer, milestones=[16], gamma=0.1
-                )
-            except Exception:
-                pass
-        # ------------------------------------------------------------------------------------------
 
         # Log to CSV
         with open(csv_file, mode="a", newline="") as f:
