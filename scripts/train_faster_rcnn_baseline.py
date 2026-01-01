@@ -53,7 +53,7 @@ def get_model(num_classes):
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
-    # Freeze backbone only (matches YOLO freeze=10 philosophy)
+    # Freeze only the ResNet body, keep FPN trainable
     for param in model.backbone.body.parameters():
         param.requires_grad = False
     return model

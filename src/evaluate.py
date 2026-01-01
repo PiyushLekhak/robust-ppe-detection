@@ -275,34 +275,6 @@ def main():
             )
     print("=" * 80)
 
-    # Automated Insight Generation
-    if yolo_res and rcnn_res:
-        y_helmet = (
-            yolo_res["per_class_ap"][2]
-            if yolo_res and len(yolo_res["per_class_ap"]) > 2
-            else 0.0
-        )
-        r_helmet = (
-            rcnn_res["per_class_ap"][2]
-            if rcnn_res and len(rcnn_res["per_class_ap"]) > 2
-            else 0.0
-        )
-
-        print("\n>>> AUTOMATED INSIGHTS:")
-        if r_helmet < 0.1 and y_helmet > 0.3:
-            print(
-                f"1. CRITICAL: Faster R-CNN failed to detect Helmets (AP: {r_helmet:.4f}), while YOLO succeeded (AP: {y_helmet:.4f})."
-            )
-            print(
-                "   -> Hypothesis: R-CNN's Region Proposal Network might be struggling with small/dense objects like helmets."
-            )
-        elif r_helmet < 0.1 and y_helmet < 0.1:
-            print(
-                "1. CRITICAL: Both models failed on Helmets. The dataset annotations or image quality for helmets might be the root cause."
-            )
-        else:
-            print("1. Both models detected Helmets reasonably well.")
-
     print(f"\n[Success] Full report saved to: {OUTPUT_CSV}")
 
 
