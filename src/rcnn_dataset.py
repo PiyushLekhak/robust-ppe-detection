@@ -12,23 +12,23 @@ class PPEDataset(Dataset):
         self.transforms = transforms
 
         # -------------------------------------------------
-        # STABLE CLASS MAPPING (UPDATED)
+        # STABLE CLASS MAPPING
         # -------------------------------------------------
         # canonical order used everywhere (semantic names)
-        # NOTE: keep these lowercase to match COCO category names in annotation file
+        # lowercase to match COCO category names in annotation file
         CANONICAL_CLASS_NAMES = ["person", "head", "helmet"]
         self.allowed_classes = CANONICAL_CLASS_NAMES.copy()
 
         # Load COCO categories and build name -> coco_category_id map
         cats = self.coco.loadCats(self.coco.getCatIds())
 
-        # Only keep categories that exist in the COCO file and are in our canonical list
+        # Only keep categories that exist in the COCO file and are in the canonical list
         self.cat_name_to_id = {
             c["name"]: c["id"] for c in cats if c["name"] in self.allowed_classes
         }
 
         # Build coco_category_id -> contiguous label using canonical order.
-        # We assign labels 1..N (0 reserved for background) and ensure the order matches CANONICAL_CLASS_NAMES.
+        # Assign labels 1..N (0 reserved for background) and ensure the order matches CANONICAL_CLASS_NAMES.
         self.cat_id_to_label = {}
         self.label_to_cat_id = {}
         self.class_names = []
