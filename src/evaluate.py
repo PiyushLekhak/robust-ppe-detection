@@ -4,6 +4,7 @@ import torch
 import datetime
 import random
 import numpy as np
+import traceback
 from ultralytics import YOLO
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -12,7 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import functional as F
 from src.rcnn_dataset import PPEDataset, collate_fn
 
-# ================= CONFIGURATION =================
+# ------------------ CONFIGURATION ------------------
 # Paths
 TEST_IMG_DIR = "data/test"
 TEST_JSON = "data/test/_annotations.coco.json"
@@ -26,14 +27,13 @@ NUM_CLASSES = 4  # Background + 3 classes
 CLASS_NAMES = ["Person", "Head", "Helmet"]  # Order must match dataset IDs 1,2,3
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ================= CANONICAL NAMES =================
+# ------------------ CANONICAL NAMES ------------------
 # canonical names (lowercase keys used in dicts)
 CANONICAL_CLASS_NAMES = ["person", "head", "helmet"]
 PRINT_CLASS_NAMES = ["Person", "Head", "Helmet"]
 
-# ================= UTILS =================
 
-
+# ------------------ UTILS ------------------
 def make_named_ap(per_class_ap_list):
     named = {}
     for i, name in enumerate(CANONICAL_CLASS_NAMES):
@@ -68,11 +68,12 @@ def setup_logging():
                     "Head_AP",
                     "Helmet_AP",
                     "Macro_AP",
+                    "FPS",
                 ]
             )
 
 
-def log_to_csv(model_name, map50, map5095, per_class_ap):
+def log_to_csv(model_name, map50, map5095, per_class_ap, fps):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Ensure per_class_ap has 3 elements
@@ -80,7 +81,7 @@ def log_to_csv(model_name, map50, map5095, per_class_ap):
     while len(safe_ap) < 3:
         safe_ap.append(0.0)
 
-    # Use canonical mapping function regardless of source; both helpers are equivalent for lists.
+    # Use canonical mapping function regardless of source
     named_ap = make_named_ap(safe_ap)
     macro_ap = sum(named_ap.values()) / len(named_ap)
 
@@ -97,12 +98,115 @@ def log_to_csv(model_name, map50, map5095, per_class_ap):
                 f"{named_ap['head']:.4f}",
                 f"{named_ap['helmet']:.4f}",
                 f"{macro_ap:.4f}",
+                f"{fps:.2f}",
             ]
         )
     print(f"   [Log] Saved metrics for {model_name} to {OUTPUT_CSV}")
 
 
-# ================= YOLO EVALUATION =================
+# ------------------ UNIFIED FPS MEASUREMENT ------------------
+def measure_fps(
+    model, dataloader, device, num_batches=50, warmup_batches=5, is_yolo=False
+):
+    """
+    Unified FPS measurement using PyTorch CUDA Events
+    Works for both YOLO and Faster R-CNN
+
+    Args:
+        model: Model to measure (YOLO or Faster R-CNN)
+        dataloader: DataLoader with test images
+        device: torch.device
+        num_batches: Number of batches to measure
+        warmup_batches: Number of warmup iterations
+        is_yolo: Boolean flag to handle YOLO-specific inference
+
+    Returns:
+        float: Average FPS
+    """
+    print("   [FPS] Warming up GPU...")
+
+    # Warmup
+    with torch.no_grad():
+        for i, batch in enumerate(dataloader):
+            if i >= warmup_batches:
+                break
+
+            if is_yolo:
+                # YOLO expects numpy arrays or image paths
+                images, _ = batch
+                # Convert tensors to numpy arrays (C, H, W) -> (H, W, C) and scale to 0-255
+                np_images = []
+                for img_tensor in images:
+                    img_np = (img_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(
+                        "uint8"
+                    )
+                    np_images.append(img_np)
+                _ = model(np_images, verbose=False)
+            else:
+                # Faster R-CNN
+                images, _ = batch
+                images = [img.to(device) for img in images]
+                _ = model(images)
+
+    # Measurement using CUDA Events
+    print("   [FPS] Measuring inference speed...")
+    batch_times = []
+    total_images = 0
+
+    with torch.no_grad():
+        for i, batch in enumerate(dataloader):
+            if i >= num_batches:
+                break
+
+            images, _ = batch
+            batch_size = len(images)
+
+            # Prepare images based on model type
+            if is_yolo:
+                # Convert tensors to numpy for YOLO
+                np_images = []
+                for img_tensor in images:
+                    img_np = (img_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(
+                        "uint8"
+                    )
+                    np_images.append(img_np)
+                prepared_images = np_images
+            else:
+                # Keep as tensors for Faster R-CNN
+                prepared_images = [img.to(device) for img in images]
+
+            # Create CUDA events
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+
+            # Record start
+            start_event.record()
+
+            # Inference
+            if is_yolo:
+                _ = model(prepared_images, verbose=False)
+            else:
+                _ = model(prepared_images)
+
+            # Record end
+            end_event.record()
+
+            # Wait for completion
+            torch.cuda.synchronize()
+
+            # Get elapsed time
+            elapsed_ms = start_event.elapsed_time(end_event)
+            batch_times.append(elapsed_ms / 1000.0)
+            total_images += batch_size
+
+    # Calculate FPS
+    total_time = sum(batch_times)
+    fps = total_images / total_time if total_time > 0 else 0.0
+
+    return fps
+
+
+# ------------------ YOLO EVALUATION ------------------
 def evaluate_yolo():
     print("\n" + "=" * 60)
     print(">>> 1. Evaluating YOLOv8 Baseline")
@@ -116,7 +220,7 @@ def evaluate_yolo():
             data="data_yolo/data.yaml",
             split="test",
             imgsz=640,
-            batch=12,
+            batch=6,
             verbose=False,
             plots=False,
         )
@@ -124,9 +228,28 @@ def evaluate_yolo():
         # --- Metrics Extraction ---
         map50 = results.box.map50
         map5095 = results.box.map
-
-        # results.box.maps contains the AP@50-95 for each class
         per_class_ap = results.box.maps.tolist()
+
+        # Create simple dataset for FPS measurement
+        test_dataset_fps = PPEDataset(
+            TEST_IMG_DIR, TEST_JSON, transforms=lambda x: F.to_tensor(x)
+        )
+        test_loader_fps = DataLoader(
+            test_dataset_fps,
+            batch_size=6,
+            shuffle=False,
+            num_workers=0,  # No multiprocessing for accurate timing
+            collate_fn=collate_fn,
+        )
+
+        fps = measure_fps(
+            model,
+            test_loader_fps,
+            DEVICE,
+            num_batches=50,
+            warmup_batches=5,
+            is_yolo=True,
+        )
 
         # Print for Console
         named_ap = make_named_ap(per_class_ap)
@@ -134,6 +257,7 @@ def evaluate_yolo():
 
         print(f"   mAP@50:    {map50:.4f}")
         print(f"   mAP@50-95: {map5095:.4f}")
+        print(f"   FPS:       {fps:.2f}")
         print("   Per-class AP:")
         for printable in PRINT_CLASS_NAMES:
             key = printable.lower()
@@ -145,14 +269,17 @@ def evaluate_yolo():
             "map50": map50,
             "map5095": map5095,
             "per_class_ap": per_class_ap,
+            "fps": fps,
         }
 
     except Exception as e:
         print(f"   [ERROR] YOLO Evaluation Failed: {e}")
+
+        traceback.print_exc()
         return None
 
 
-# ================= R-CNN EVALUATION =================
+# ------------------ R-CNN EVALUATION ------------------
 def evaluate_rcnn():
     print("\n" + "=" * 60)
     print(">>> 2. Evaluating Faster R-CNN Baseline")
@@ -179,6 +306,7 @@ def evaluate_rcnn():
         test_dataset, batch_size=6, shuffle=False, num_workers=4, collate_fn=collate_fn
     )
 
+    # Accuracy evaluation
     metric = MeanAveragePrecision(iou_type="bbox", class_metrics=True)
 
     print("   Running Inference...")
@@ -205,11 +333,21 @@ def evaluate_rcnn():
     while len(per_class_ap) < 3:
         per_class_ap.append(0.0)
 
+    # Create separate loader for FPS (no multiprocessing)
+    test_loader_fps = DataLoader(
+        test_dataset, batch_size=6, shuffle=False, num_workers=0, collate_fn=collate_fn
+    )
+
+    fps = measure_fps(
+        model, test_loader_fps, DEVICE, num_batches=50, warmup_batches=5, is_yolo=False
+    )
+
     named_ap = make_named_ap(per_class_ap)
     macro_ap = sum(named_ap.values()) / len(named_ap)
 
     print(f"   mAP@50:    {map50:.4f}")
     print(f"   mAP@50-95: {map5095:.4f}")
+    print(f"   FPS:       {fps:.2f}")
     print("   Per-class AP:")
     for printable in PRINT_CLASS_NAMES:
         key = printable.lower()
@@ -221,10 +359,11 @@ def evaluate_rcnn():
         "map50": map50,
         "map5095": map5095,
         "per_class_ap": per_class_ap,
+        "fps": fps,
     }
 
 
-# ================= MAIN =================
+# ------------------ MAIN ------------------
 def main():
     set_seed(42)
     setup_logging()
@@ -240,6 +379,7 @@ def main():
             yolo_res["map50"],
             yolo_res["map5095"],
             yolo_res["per_class_ap"],
+            yolo_res["fps"],
         )
     if rcnn_res:
         log_to_csv(
@@ -247,33 +387,33 @@ def main():
             rcnn_res["map50"],
             rcnn_res["map5095"],
             rcnn_res["per_class_ap"],
+            rcnn_res["fps"],
         )
 
     # --- FINAL REPORT ---
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 90)
     print("FINAL TEST SET RESULTS")
-    print("=" * 80)
+    print("=" * 90)
 
     # Header
     print(
-        f"{'Model':<15} | {'mAP@50':<10} | {'mAP@50-95':<10} | {'Person AP':<10} | {'Head AP':<10} | {'Helmet AP':<10} | {'Macro-AP':<10}"
+        f"{'Model':<15} | {'mAP@50':<10} | {'mAP@50-95':<10} | {'Person AP':<10} | "
+        f"{'Head AP':<10} | {'Helmet AP':<10} | {'Macro-AP':<10} | {'FPS':<10}"
     )
-    print("-" * 80)
+    print("-" * 90)
 
     # Rows
     for res in [yolo_res, rcnn_res]:
         if res:
-            # convert list -> named map for robust printing
             ap_list = res["per_class_ap"]
-            named = make_named_ap(
-                ap_list
-            )  # this mapping is canonical and works for both models
+            named = make_named_ap(ap_list)
             macro = sum(named.values()) / len(named) if len(named) > 0 else 0.0
             print(
                 f"{res['name']:<15} | {res['map50']:<10.4f} | {res['map5095']:<10.4f} | "
-                f"{named['person']:<10.4f} | {named['head']:<10.4f} | {named['helmet']:<10.4f} | {macro:<10.4f}"
+                f"{named['person']:<10.4f} | {named['head']:<10.4f} | {named['helmet']:<10.4f} | "
+                f"{macro:<10.4f} | {res['fps']:<10.2f}"
             )
-    print("=" * 80)
+    print("=" * 90)
 
     print(f"\n[Success] Full report saved to: {OUTPUT_CSV}")
 
