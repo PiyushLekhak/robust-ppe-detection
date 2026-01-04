@@ -238,7 +238,8 @@ def evaluate_yolo():
             test_dataset_fps,
             batch_size=6,
             shuffle=False,
-            num_workers=0,  # No multiprocessing for accurate timing
+            num_workers=4,
+            pin_memory=True,
             collate_fn=collate_fn,
         )
 
@@ -333,9 +334,9 @@ def evaluate_rcnn():
     while len(per_class_ap) < 3:
         per_class_ap.append(0.0)
 
-    # Create separate loader for FPS (no multiprocessing)
+    # Create separate loader for FPS
     test_loader_fps = DataLoader(
-        test_dataset, batch_size=6, shuffle=False, num_workers=0, collate_fn=collate_fn
+        test_dataset, batch_size=6, shuffle=False, num_workers=4, collate_fn=collate_fn
     )
 
     fps = measure_fps(
