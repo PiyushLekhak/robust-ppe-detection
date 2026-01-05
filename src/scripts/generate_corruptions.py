@@ -4,15 +4,23 @@ import json
 import shutil
 from pathlib import Path
 import albumentations as A
+import random
+import numpy as np
 
-################################### need to  add seed later.
 # ---------------- CONFIGURATION ----------------
+SEED = 42
 SOURCE_IMG_DIR = "data/test"
 SOURCE_JSON = "data/test/_annotations.coco.json"
 OUTPUT_ROOT = "data/test_c"
 
+
+def seed_everything(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+
+
 # Define The "Industrial Quad" of Corruptions
-# We use 3 severity levels: 1 (Mild), 3 (Moderate), 5 (Severe)
+# 3 severity levels: 1 (Mild), 3 (Moderate), 5 (Severe)
 CORRUPTIONS = {
     "darkness": {
         1: A.RandomBrightnessContrast(
@@ -83,8 +91,7 @@ def generate_dataset(corruption_name, severity, transform):
     print(f"Copied annotations to {dest_json}")
 
     # 2. Process Images
-    image_files = list(Path(SOURCE_IMG_DIR).glob("*.jpg"))
-    image_files.extend(list(Path(SOURCE_IMG_DIR).glob("*.png")))
+    image_files = sorted(Path(SOURCE_IMG_DIR).glob("*.jpg"))
 
     if len(image_files) == 0:
         print(f"WARNING: No images found in {SOURCE_IMG_DIR}")
@@ -102,7 +109,8 @@ def generate_dataset(corruption_name, severity, transform):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         # Apply Corruption
-        augmented = transform(image=image)["image"]
+        deterministic_transform = transform.to_deterministic()
+        augmented = deterministic_transform(image=image)["image"]
 
         # Save (Convert back to BGR for OpenCV)
         save_path = os.path.join(dest_img_dir, img_path.name)
@@ -135,6 +143,7 @@ def verify_structure():
 
 
 def main():
+    seed_everything(SEED)
     print("=" * 60)
     print("CORRUPTION GENERATION PIPELINE")
     print("=" * 60)
