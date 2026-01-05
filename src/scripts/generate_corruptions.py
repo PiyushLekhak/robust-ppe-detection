@@ -11,7 +11,8 @@ import numpy as np
 SEED = 42
 SOURCE_IMG_DIR = "data/test"
 SOURCE_JSON = "data/test/_annotations.coco.json"
-OUTPUT_ROOT = "data/test_c"
+SOURCE_YOLO_LABEL_DIR = "data_yolo/test/labels"
+OUTPUT_ROOT = "data_corrupted"
 
 
 def seed_everything(seed: int):
@@ -23,15 +24,9 @@ def seed_everything(seed: int):
 # 3 severity levels: 1 (Mild), 3 (Moderate), 5 (Severe)
 CORRUPTIONS = {
     "darkness": {
-        1: A.RandomBrightnessContrast(
-            brightness_limit=(-0.2, -0.2), contrast_limit=0, p=1
-        ),
-        3: A.RandomBrightnessContrast(
-            brightness_limit=(-0.5, -0.5), contrast_limit=0, p=1
-        ),
-        5: A.RandomBrightnessContrast(
-            brightness_limit=(-0.7, -0.7), contrast_limit=0, p=1
-        ),
+        1: A.RandomBrightnessContrast(brightness_limit=-0.2, contrast_limit=0, p=1),
+        3: A.RandomBrightnessContrast(brightness_limit=-0.5, contrast_limit=0, p=1),
+        5: A.RandomBrightnessContrast(brightness_limit=-0.7, contrast_limit=0, p=1),
     },
     "motion_blur": {
         1: A.MotionBlur(blur_limit=(3, 5), p=1),
@@ -39,9 +34,9 @@ CORRUPTIONS = {
         5: A.MotionBlur(blur_limit=(15, 21), p=1),
     },
     "noise": {
-        1: A.GaussNoise(var_limit=(10.0, 30.0), p=1),
-        3: A.GaussNoise(var_limit=(50.0, 100.0), p=1),
-        5: A.GaussNoise(var_limit=(200.0, 400.0), p=1),
+        1: A.GaussNoise(stddev=(10.0, 30.0), p=1),
+        3: A.GaussNoise(stddev=(50.0, 100.0), p=1),
+        5: A.GaussNoise(stddev=(200.0, 400.0), p=1),
     },
     "defocus_blur": {
         1: A.Defocus(radius=(3, 5), alias_blur=(0.1, 0.3), p=1),
@@ -64,16 +59,6 @@ def save_coco_json(data, save_path):
 
 
 def generate_dataset(corruption_name, severity, transform):
-    """
-    Creates a new dataset folder for a specific corruption and severity.
-    Copies the original JSON (labels don't change for pixel-level transforms!)
-    and saves corrupted images.
-
-    Args:
-        corruption_name: Name of corruption (e.g., "darkness")
-        severity: Severity level (1, 3, or 5)
-        transform: Albumentations transform to apply
-    """
     print(f"\n{'='*60}")
     print(f"Generating: {corruption_name.upper()} | Severity Level {severity}")
     print(f"{'='*60}")
@@ -81,7 +66,10 @@ def generate_dataset(corruption_name, severity, transform):
     # Setup Paths
     dest_dir = os.path.join(OUTPUT_ROOT, corruption_name, str(severity))
     dest_img_dir = os.path.join(dest_dir, "images")
+    dest_label_dir = os.path.join(dest_dir, "labels")
+
     os.makedirs(dest_img_dir, exist_ok=True)
+    os.makedirs(dest_label_dir, exist_ok=True)
 
     # 1. Copy JSON (Annotations remain valid for pixel-level transforms)
     # Note: Geometric transforms (rotation/scale) would require bbox updates
@@ -90,7 +78,12 @@ def generate_dataset(corruption_name, severity, transform):
     shutil.copy(SOURCE_JSON, dest_json)
     print(f"Copied annotations to {dest_json}")
 
-    # 2. Process Images
+    # 2. Copy YOLO labels
+    for label_file in Path(SOURCE_YOLO_LABEL_DIR).glob("*.txt"):
+        shutil.copy(label_file, dest_label_dir)
+    print(f"Copied YOLO labels to {dest_label_dir}")
+
+    # 3. Process Images
     image_files = sorted(Path(SOURCE_IMG_DIR).glob("*.jpg"))
 
     if len(image_files) == 0:
@@ -108,9 +101,8 @@ def generate_dataset(corruption_name, severity, transform):
 
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Apply Corruption
-        deterministic_transform = transform.to_deterministic()
-        augmented = deterministic_transform(image=image)["image"]
+        # Apply Corruption directly (parameters are fixed per-call automatically)
+        augmented = transform(image=image)["image"]
 
         # Save (Convert back to BGR for OpenCV)
         save_path = os.path.join(dest_img_dir, img_path.name)
@@ -176,8 +168,6 @@ def main():
     print(f"Corruptions generated:")
     for c_name in CORRUPTIONS.keys():
         print(f"  - {c_name}: levels 1, 3, 5")
-    print("\nNext step: Run evaluate_corruptions.py to test robustness")
-    print("=" * 60)
 
 
 if __name__ == "__main__":

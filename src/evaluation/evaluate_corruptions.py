@@ -28,8 +28,8 @@ OUTPUT_CSV = os.path.join(OUTPUT_DIR, "corruption_results.csv")
 CORRUPTIONS = ["darkness", "motion_blur", "noise", "defocus_blur"]
 SEVERITIES = [1, 3, 5]
 
-YOLO_YAML_DIR = "data_yolo"
-RCNN_BASE_DIR = "data/test_c"
+YOLO_YAML_DIR = "data_corrupted"
+RCNN_BASE_DIR = "data_corrupted"
 
 
 # ------------------ UTILS ------------------

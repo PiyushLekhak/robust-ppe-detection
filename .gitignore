@@ -5,6 +5,7 @@
 # Data & caches
 data/
 data_yolo/
+data_corrupted/
 
 # Python cache
 __pycache__/
