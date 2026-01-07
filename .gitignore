@@ -6,6 +6,7 @@
 data/
 data_yolo/
 data_corrupted/
+data_enhanced/
 
 # Python cache
 __pycache__/
