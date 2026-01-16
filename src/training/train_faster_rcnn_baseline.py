@@ -50,6 +50,8 @@ def get_model(num_classes):
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
         weights="DEFAULT", min_size=640, max_size=640
     )
+
+    # Replace the box predictor to match the number of classes
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
@@ -75,7 +77,7 @@ def train_one_epoch(model, optimizer, data_loader, device, scaler):
         scaler.step(optimizer)
         scaler.update()
         total_loss += losses.item()
-    return total_loss / len(data_loader)
+    return total_loss / len(data_loader)  # average loss per batch
 
 
 @torch.no_grad()
@@ -132,6 +134,7 @@ def main():
     )
 
     model = get_model(NUM_CLASSES).to(DEVICE)
+    # optimize only trainable parameters
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=LR, momentum=0.9, weight_decay=0.0005)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(

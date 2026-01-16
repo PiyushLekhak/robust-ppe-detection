@@ -50,10 +50,6 @@ def apply_bilateral(image, d=9, sigma_color=75, sigma_space=75):
 
 
 def apply_unsharp_mask(image, strength="low"):
-    """
-    Reverted to V1 Logic: Gentle sharpening.
-    Does not introduce jagged artifacts like Kernel Sharpening.
-    """
     if strength == "low":
         gaussian = cv2.GaussianBlur(image, (0, 0), 2.0)
         return cv2.addWeighted(image, 1.5, gaussian, -0.5, 0)
@@ -63,7 +59,6 @@ def apply_unsharp_mask(image, strength="low"):
 
 # ---------------- CORRUPTION-SPECIFIC WRAPPERS ----------------
 def enhance_darkness(img):
-    # KEEPING V2: It worked best.
     img = apply_gamma(img, gamma=1.5)
     img = apply_clahe(img, clip_limit=2.0)
     img = apply_bilateral(img, d=5, sigma_color=50, sigma_space=50)
@@ -75,12 +70,11 @@ def enhance_noise(img):
 
 
 def enhance_motion_blur(img):
-    # We use "low" strength to avoid over-processing.
+    # use "low" strength to avoid over-processing.
     return apply_unsharp_mask(img, strength="low")
 
 
 def enhance_defocus_blur(img):
-    # Defocus 5 is unrecoverable. We try to help Severity 3 slightly.
     return apply_unsharp_mask(img, strength="low")
 
 
@@ -141,7 +135,7 @@ def process_dataset(corruption, severity, enhancement_fn):
 def main():
     seed_everything(SEED)
     print("=" * 60)
-    print("ENHANCEMENT PHASE - Smart Restoration")
+    print("ENHANCEMENT PHASE")
     print("=" * 60)
 
     if os.path.exists(ENHANCED_ROOT):

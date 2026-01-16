@@ -1,6 +1,5 @@
 import os
 import cv2
-import json
 import shutil
 from pathlib import Path
 import albumentations as A
@@ -46,18 +45,6 @@ CORRUPTIONS = {
 }
 
 
-def load_coco_json(json_path):
-    """Load COCO format JSON"""
-    with open(json_path, "r") as f:
-        return json.load(f)
-
-
-def save_coco_json(data, save_path):
-    """Save COCO format JSON"""
-    with open(save_path, "w") as f:
-        json.dump(data, f, indent=2)
-
-
 def generate_dataset(corruption_name, severity, transform):
     print(f"\n{'='*60}")
     print(f"Generating: {corruption_name.upper()} | Severity Level {severity}")
@@ -72,8 +59,6 @@ def generate_dataset(corruption_name, severity, transform):
     os.makedirs(dest_label_dir, exist_ok=True)
 
     # 1. Copy JSON (Annotations remain valid for pixel-level transforms)
-    # Note: Geometric transforms (rotation/scale) would require bbox updates
-    # But blur/noise/darkness preserve spatial relationships
     dest_json = os.path.join(dest_dir, "_annotations.coco.json")
     shutil.copy(SOURCE_JSON, dest_json)
     print(f"Copied annotations to {dest_json}")

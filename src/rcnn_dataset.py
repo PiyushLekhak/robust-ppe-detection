@@ -11,15 +11,10 @@ class PPEDataset(Dataset):
         self.coco = COCO(annotation_file)
         self.transforms = transforms
 
-        # -------------------------------------------------
-        # STABLE CLASS MAPPING
-        # -------------------------------------------------
         # canonical order used everywhere (semantic names)
-        # lowercase to match COCO category names in annotation file
         CANONICAL_CLASS_NAMES = ["person", "head", "helmet"]
         self.allowed_classes = CANONICAL_CLASS_NAMES.copy()
 
-        # Load COCO categories and build name -> coco_category_id map
         cats = self.coco.loadCats(self.coco.getCatIds())
 
         # Only keep categories that exist in the COCO file and are in the canonical list
@@ -27,7 +22,6 @@ class PPEDataset(Dataset):
             c["name"]: c["id"] for c in cats if c["name"] in self.allowed_classes
         }
 
-        # Build coco_category_id -> contiguous label using canonical order.
         # Assign labels 1..N (0 reserved for background) and ensure the order matches CANONICAL_CLASS_NAMES.
         self.cat_id_to_label = {}
         self.label_to_cat_id = {}
@@ -49,11 +43,9 @@ class PPEDataset(Dataset):
                 print(f"  {n} -> coco_id {cid} -> label {self.cat_id_to_label[cid]}")
             else:
                 print(f"  {n} -> NOT FOUND in annotations")
-        # -------------------------------------------------
 
-        # -------------------------------------------------
         # FILTER IMAGES WITH AT LEAST ONE VALID ANNOTATION
-        # -------------------------------------------------
+
         valid_ids = []
         for img_id in self.coco.imgs.keys():
             ann_ids = self.coco.getAnnIds(imgIds=img_id)
@@ -80,16 +72,12 @@ class PPEDataset(Dataset):
         coco = self.coco
         img_id = self.ids[index]
 
-        # -----------------------
         # LOAD IMAGE
-        # -----------------------
         img_info = coco.loadImgs(img_id)[0]
         img_path = os.path.join(self.root, img_info["file_name"])
         img = Image.open(img_path).convert("RGB")
 
-        # -----------------------
         # LOAD ANNOTATIONS
-        # -----------------------
         ann_ids = coco.getAnnIds(imgIds=img_id)
         anns = coco.loadAnns(ann_ids)
 
@@ -99,7 +87,7 @@ class PPEDataset(Dataset):
         for ann in anns:
             cat_id = ann["category_id"]
 
-            # DROP unwanted classes (e.g. worker)
+            # DROP unwanted classes (worker)
             if cat_id not in self.cat_id_to_label:
                 continue
 
