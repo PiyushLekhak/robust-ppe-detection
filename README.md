@@ -1,6 +1,6 @@
 # Robust PPE Detection
 
-## YOLOv8 vs Faster R-CNN under real-world image degradations
+## YOLOv8m vs Faster R-CNN under real-world image degradations
 
 This repository benchmarks two object-detection architectures—**YOLOv8m** and **Faster R-CNN**—for helmet (PPE) detection under challenging visual conditions. It also evaluates whether lightweight, classical image-processing techniques can improve detector robustness on degraded inputs.
 
@@ -92,7 +92,7 @@ ROBUST-PPE-DETECTION/
 ## Reproducibility
 
 * **Random seed:** `42` (splits, corruptions, evaluation)
-* **Environment:** Python 3.12; PyTorch + torchvision; Ultralytics YOLOv8m; OpenCV; Albumentations
+* **Environment:** Python 3.12.3; PyTorch + torchvision; Ultralytics YOLOv8m; OpenCV; Albumentations
 * **Hardware:** NVIDIA RTX 3060 mobile GPU
 
 All experiments can be reproduced using the provided scripts and configuration files.
