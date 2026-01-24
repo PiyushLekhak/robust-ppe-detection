@@ -2,7 +2,7 @@
 
 ## YOLOv8m vs Faster R-CNN under real-world image degradations
 
-This repository benchmarks two object-detection architectures—**YOLOv8m** and **Faster R-CNN**—for helmet (PPE) detection under challenging visual conditions. It also evaluates whether lightweight, classical image-processing techniques can improve detector robustness on degraded inputs.
+This repository benchmarks two object-detection architectures, **YOLOv8m** and **Faster R-CNN**, for helmet (PPE) detection under challenging visual conditions. It also evaluates whether lightweight, classical image-processing techniques can improve detector robustness on degraded inputs.
 
 The emphasis is on reproducibility, failure-mode analysis, and practical robustness rather than maximum clean-data accuracy.
 
@@ -101,8 +101,8 @@ All experiments can be reproduced using the provided scripts and configuration f
 
 ## Notes & limitations
 
-* Classical image enhancement provides measurable benefit for noise and illumination issues but limited gains for blur (especially defocus)
-* Results depend on dataset and corruption severity; expect variance across other PPE datasets or camera setups
+* Classical image enhancement provides measurable benefit for noise and illumination issues, but limited gains for blur (especially defocus)
+* Results depend on the dataset and corruption severity; expect variance across other PPE datasets or camera setups
 * This work demonstrates practical, low-cost preprocessing strategies; deep restoration approaches may be required for substantial blur recovery
 
 ---
